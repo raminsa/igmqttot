@@ -18,11 +18,8 @@ package packets
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
-
-	thrift "github.com/apache/thrift/lib/go/thrift"
 )
 
 // ConnectPacket is an internal representation of the fields of the
@@ -62,41 +59,14 @@ func (c *ConnectPacket) Write(w io.Writer) error {
 	body.WriteString("MQTToT")
 	body.WriteByte(3)
 	body.WriteByte(194)
-	var buf []byte
-	buf, err = WriteWord(int16(c.Keepalive))
-	body.Write(buf)
+	body.Write(encodeUint16(c.Keepalive))
 	body.Write(c.ClientIdentifier)
-
-	//body.WriteByte(c.ProtocolVersion)
-	//body.WriteByte(boolToByte(c.CleanSession)<<1 | boolToByte(c.WillFlag)<<2 | c.WillQos<<3 | boolToByte(c.WillRetain)<<5 | boolToByte(c.PasswordFlag)<<6 | boolToByte(c.UsernameFlag)<<7)
-	//body.Write(encodeUint16(c.Keepalive))
-	//body.Write(encodeBytes(c.ClientIdentifier))
-	//if c.WillFlag {
-	//	body.Write(encodeString(c.WillTopic))
-	//	body.Write(encodeBytes(c.WillMessage))
-	//}
-	//if c.UsernameFlag {
-	//	body.Write(encodeString(c.Username))
-	//}
-	//if c.PasswordFlag {
-	//	body.Write(encodeBytes(c.Password))
-	//}
 	c.FixedHeader.RemainingLength = body.Len()
 	packet := c.FixedHeader.pack()
 	packet.Write(body.Bytes())
 	_, err = packet.WriteTo(w)
 
 	return err
-}
-
-func WriteWord(val int16) ([]byte, error) {
-	buf := thrift.NewTMemoryBuffer()
-	proto := thrift.NewTCompactProtocol(buf)
-	if err := proto.WriteI16(context.Background(), val); err != nil {
-		return nil, err
-	}
-
-	return buf.Buffer.Bytes(), nil
 }
 
 // Unpack decodes the details of a ControlPacket after the fixed
