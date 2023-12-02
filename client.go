@@ -25,7 +25,6 @@ package mqtt
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -34,6 +33,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/asaskevich/EventBus"
 	"github.com/raminsa/igmqttot/packets"
 	"golang.org/x/sync/semaphore"
 )
@@ -71,7 +71,7 @@ type Client interface {
 	// Connect will create a connection to the message broker, by default
 	// it will attempt to connect at v3.1.1 and auto retry at v3.1 if that
 	// fails
-	Connect() (Token, []byte)
+	Connect() Token
 	// Disconnect will end the connection with the server, but not before waiting
 	// the specified number of milliseconds to wait for existing work to be
 	// completed.
@@ -120,6 +120,7 @@ type Client interface {
 // clients are safe for concurrent use by multiple
 // goroutines
 type client struct {
+	emitter         EventBus.Bus
 	lastSent        atomic.Value // time.Time - the last time a packet was successfully sent to network
 	lastReceived    atomic.Value // time.Time - the last time a packet was successfully received from network
 	pingOutstanding int32        // set to 1 if a ping has been sent but response not ret received
@@ -150,7 +151,9 @@ type client struct {
 // on it before it may be used. This is to make sure resources (such as a net
 // connection) are created before the application is actually ready.
 func NewClient(o *ClientOptions) Client {
-	c := &client{}
+	c := &client{
+		emitter: o.Emitter,
+	}
 	c.options = *o
 
 	if c.options.Store == nil {
@@ -226,9 +229,8 @@ var ErrNotConnected = errors.New("not Connected")
 // Note: If using QOS1+ and CleanSession=false it is advisable to add
 // routes (or a DefaultPublishHandler) prior to calling Connect()
 // because queued messages may be delivered immediately post connection
-func (c *client) Connect() (Token, []byte) {
+func (c *client) Connect() Token {
 	t := newToken(packets.Connect).(*ConnectToken)
-	var payload []byte
 	DEBUG.Println(CLI, "Connect()")
 
 	connectionUp, err := c.status.Connecting()
@@ -238,11 +240,11 @@ func (c *client) Connect() (Token, []byte) {
 			WARN.Println(CLI, "Connect() called but not disconnected")
 			t.returnCode = packets.Accepted
 			t.flowComplete()
-			return t, nil
+			return t
 		}
 		ERROR.Println(CLI, err) // CONNECT should never be called unless we are disconnected
 		t.setError(err)
-		return t, nil
+		return t
 	}
 
 	c.persist.Open()
@@ -262,6 +264,7 @@ func (c *client) Connect() (Token, []byte) {
 	RETRYCONN:
 		var conn net.Conn
 		var rc byte
+		var payload []byte
 		var err error
 		conn, rc, t.sessionPresent, payload, err = c.attemptConnection()
 		if err != nil {
@@ -282,8 +285,8 @@ func (c *client) Connect() (Token, []byte) {
 			}
 			return
 		}
-		inboundFromStore := make(chan packets.ControlPacket)                    // there may be some inbound comms packets in the store that are awaiting processing
-		if c.startCommsWorkers(conn, payload, connectionUp, inboundFromStore) { // note that this takes care of updating the status (to connected or disconnected)
+		inboundFromStore := make(chan packets.ControlPacket)           // there may be some inbound comms packets in the store that are awaiting processing
+		if c.startCommsWorkers(conn, connectionUp, inboundFromStore) { // note that this takes care of updating the status (to connected or disconnected)
 			// Take care of any messages in the store
 			if !c.options.CleanSession {
 				c.resume(c.options.ResumeSubs, inboundFromStore)
@@ -294,11 +297,13 @@ func (c *client) Connect() (Token, []byte) {
 			WARN.Println(CLI, "Connect() called but connection established in another goroutine")
 		}
 
+		c.emitter.Publish("payload", payload)
+
 		close(inboundFromStore)
 		t.flowComplete()
 		DEBUG.Println(CLI, "exit startClient")
 	}()
-	return t, payload
+	return t
 }
 
 // internal function used to reconnect the client when it loses its connection
@@ -337,8 +342,8 @@ func (c *client) reconnect(connectionUp connCompletedFn) {
 		}
 	}
 
-	inboundFromStore := make(chan packets.ControlPacket)                // there may be some inbound comms packets in the store that are awaiting processing
-	if c.startCommsWorkers(conn, nil, connectionUp, inboundFromStore) { // note that this takes care of updating the status (to connected or disconnected)
+	inboundFromStore := make(chan packets.ControlPacket)           // there may be some inbound comms packets in the store that are awaiting processing
+	if c.startCommsWorkers(conn, connectionUp, inboundFromStore) { // note that this takes care of updating the status (to connected or disconnected)
 		c.resume(c.options.ResumeSubs, inboundFromStore)
 	}
 	close(inboundFromStore)
@@ -574,7 +579,7 @@ func (c *client) internalConnLost(whyConnLost error) {
 // It starts off the routines needed to process incoming and outgoing messages.
 // Returns true if the comms workers were started (i.e. successful connection)
 // connectionUp(true) will be called once everything is up;  connectionUp(false) will be called on failure
-func (c *client) startCommsWorkers(conn net.Conn, payload []byte, connectionUp connCompletedFn, inboundFromStore <-chan packets.ControlPacket) bool {
+func (c *client) startCommsWorkers(conn net.Conn, connectionUp connCompletedFn, inboundFromStore <-chan packets.ControlPacket) bool {
 	DEBUG.Println(CLI, "startCommsWorkers called")
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
@@ -615,65 +620,6 @@ func (c *client) startCommsWorkers(conn net.Conn, payload []byte, connectionUp c
 		return false
 	}
 	DEBUG.Println(CLI, "client is connected/reconnected")
-
-	//Added
-	DEBUG.Println(CLI, "Connected to MQTT")
-	if len(payload) == 0 {
-		DEBUG.Println(CLI, "Received empty connect packet. Try resetting your fbns state!")
-		close(c.stop) // Tidy up anything we have already started
-		close(incomingPubChan)
-		c.workers.Wait()
-		c.conn.Close()
-		c.conn = nil
-		return false
-	}
-	DEBUG.Println(CLI, "Received auth:", string(payload))
-
-	const INSTAGRAM_PACKAGE_NAME = "com.instagram.android"
-	fbAnalyticsApplicationId := "567067343352427"
-
-	payloadStruct := struct {
-		PkgName string `json:"pkg_name"`
-		AppID   string `json:"appid"`
-	}{
-		PkgName: INSTAGRAM_PACKAGE_NAME,
-		AppID:   fbAnalyticsApplicationId,
-	}
-
-	payloadBytes, err := json.Marshal(payloadStruct)
-	if err != nil {
-		DEBUG.Println(CLI, "Error marshalling to JSON:", err)
-		close(c.stop) // Tidy up anything we have already started
-		close(incomingPubChan)
-		c.workers.Wait()
-		c.conn.Close()
-		c.conn = nil
-		return false
-	}
-
-	const FBNS_REG_REQ_ID = "79"
-	if token := c.Publish(FBNS_REG_REQ_ID, 1, false, payloadBytes); token.Wait() && token.Error() != nil {
-		DEBUG.Println(CLI, "Error Publish:", token.Error())
-		close(c.stop) // Tidy up anything we have already started
-		close(incomingPubChan)
-		c.workers.Wait()
-		c.conn.Close()
-		c.conn = nil
-		return false
-	}
-
-	const FBNS_MESSAGE_ID = "76"
-	if token := c.Subscribe(FBNS_MESSAGE_ID, 1, nil); token.Wait() && token.Error() != nil {
-		DEBUG.Println(CLI, "Error Publish:", token.Error())
-		close(c.stop) // Tidy up anything we have already started
-		close(incomingPubChan)
-		c.workers.Wait()
-		c.conn.Close()
-		c.conn = nil
-		return false
-
-	}
-	//Added
 
 	if c.options.OnConnect != nil {
 		go c.options.OnConnect(c)
