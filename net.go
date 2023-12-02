@@ -39,12 +39,12 @@ const closedNetConnErrorText = "use of closed network connection" // error strin
 // protocolVersion - The protocol version to attempt to connect with
 //
 // Note that, for backward compatibility, ConnectMQTT() suppresses the actual connection error (compare to connectMQTT()).
-func ConnectMQTT(conn net.Conn, cm *packets.ConnectPacket, protocolVersion uint) (byte, bool) {
-	rc, sessionPresent, _ := connectMQTT(conn, cm, protocolVersion)
-	return rc, sessionPresent
+func ConnectMQTT(conn net.Conn, cm *packets.ConnectPacket, protocolVersion uint) (byte, bool, []byte) {
+	rc, sessionPresent, payload, _ := connectMQTT(conn, cm, protocolVersion)
+	return rc, sessionPresent, payload
 }
 
-func connectMQTT(conn io.ReadWriter, cm *packets.ConnectPacket, protocolVersion uint) (byte, bool, error) {
+func connectMQTT(conn io.ReadWriter, cm *packets.ConnectPacket, protocolVersion uint) (byte, bool, []byte, error) {
 	switch protocolVersion {
 	case 3:
 		DEBUG.Println(CLI, "Using MQTT 3.1 protocol")
@@ -66,39 +66,41 @@ func connectMQTT(conn io.ReadWriter, cm *packets.ConnectPacket, protocolVersion 
 
 	if err := cm.Write(conn); err != nil {
 		ERROR.Println(CLI, err)
-		return packets.ErrNetworkError, false, err
+		return packets.ErrNetworkError, false, nil, err
 	}
 
-	rc, sessionPresent, err := verifyCONNACK(conn)
-	return rc, sessionPresent, err
+	rc, sessionPresent, payload, err := verifyCONNACK(conn)
+	return rc, sessionPresent, payload, err
 }
 
-// This function is only used for receiving a connack
-// when the connection is first started.
-// This prevents receiving incoming data while resume
-// is in progress if clean session is false.
-func verifyCONNACK(conn io.Reader) (byte, bool, error) {
-	DEBUG.Println(NET, "connect started")
+// MQTToTConnectResponsePacket defines the structure for the MQTT Connect Acknowledgment packet
+type MQTToTConnectResponsePacket struct {
+	AckFlags   byte
+	ReturnCode byte
+	Payload    []byte
+}
 
+// verifyCONNACK processes the CONNACK packet from the provided io.Reader and returns the relevant MQTToTConnectResponsePacket info or an error.
+func verifyCONNACK(conn io.Reader) (byte, bool, []byte, error) {
 	ca, err := packets.ReadPacket(conn)
 	if err != nil {
 		ERROR.Println(NET, "connect got error", err)
-		return packets.ErrNetworkError, false, err
+		return packets.ErrNetworkError, false, nil, err
 	}
 
 	if ca == nil {
 		ERROR.Println(NET, "received nil packet")
-		return packets.ErrNetworkError, false, errors.New("nil CONNACK packet")
+		return packets.ErrNetworkError, false, nil, errors.New("nil CONNACK packet")
 	}
 
 	msg, ok := ca.(*packets.ConnackPacket)
 	if !ok {
 		ERROR.Println(NET, "received msg that was not CONNACK")
-		return packets.ErrNetworkError, false, errors.New("non-CONNACK first packet received")
+		return packets.ErrNetworkError, false, nil, errors.New("non-CONNACK first packet received")
 	}
 
 	DEBUG.Println(NET, "received connack")
-	return msg.ReturnCode, msg.SessionPresent, nil
+	return msg.ReturnCode, msg.SessionPresent, msg.Payload, nil
 }
 
 // inbound encapsulates the output from startIncoming.

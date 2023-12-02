@@ -28,6 +28,8 @@ type ConnackPacket struct {
 	FixedHeader
 	SessionPresent bool
 	ReturnCode     byte
+	AckFlags       byte
+	Payload        []byte
 }
 
 func (ca *ConnackPacket) String() string {
@@ -55,9 +57,21 @@ func (ca *ConnackPacket) Unpack(b io.Reader) error {
 	if err != nil {
 		return err
 	}
+	ca.AckFlags = flags
 	ca.SessionPresent = 1&flags > 0
 	ca.ReturnCode, err = decodeByte(b)
-
+	if err != nil {
+		return err
+	}
+	if ca.RemainingLength > 2 {
+		ca.Payload = make([]byte, ca.RemainingLength-2)
+		_, err = io.ReadFull(b, ca.Payload)
+		if err != nil {
+			return err
+		}
+	} else {
+		ca.Payload = []byte{}
+	}
 	return err
 }
 
