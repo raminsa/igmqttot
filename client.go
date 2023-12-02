@@ -671,6 +671,7 @@ func (c *client) startCommsWorkers(conn net.Conn, payload []byte, connectionUp c
 		c.conn.Close()
 		c.conn = nil
 		return false
+
 	}
 	//Added
 
