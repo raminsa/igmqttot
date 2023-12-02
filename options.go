@@ -28,8 +28,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-
-	"github.com/asaskevich/EventBus"
 )
 
 // CredentialsProvider allows the username and password to be updated
@@ -70,7 +68,6 @@ type OpenConnectionFunc func(uri *url.URL, options ClientOptions) (net.Conn, err
 // to create a configuration with difficult to trace issues (e.g. Mosquitto 2.0.12+ will reject connections
 // with KeepAlive=0 by default).
 type ClientOptions struct {
-	Emitter                 EventBus.Bus
 	Servers                 []*url.URL
 	ClientID                []byte
 	Username                string
@@ -108,6 +105,7 @@ type ClientOptions struct {
 	Dialer                  *net.Dialer
 	CustomOpenConnectionFn  OpenConnectionFunc
 	AutoAckDisabled         bool
+	Auth                    *DeviceAuth
 }
 
 // NewClientOptions will create a new ClientClientOptions type with some
@@ -120,7 +118,7 @@ type ClientOptions struct {
 //	ConnectTimeout: 30 (seconds)
 //	MaxReconnectInterval 10 (minutes)
 //	AutoReconnect: True
-func NewClientOptions() *ClientOptions {
+func NewClientOptions(auth *DeviceAuth) *ClientOptions {
 	o := &ClientOptions{
 		Servers:                 nil,
 		ClientID:                nil,
@@ -153,6 +151,7 @@ func NewClientOptions() *ClientOptions {
 		Dialer:                  &net.Dialer{Timeout: 30 * time.Second},
 		CustomOpenConnectionFn:  nil,
 		AutoAckDisabled:         false,
+		Auth:                    auth,
 	}
 	return o
 }

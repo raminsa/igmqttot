@@ -25,6 +25,7 @@ package mqtt
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -33,7 +34,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/asaskevich/EventBus"
 	"github.com/raminsa/igmqttot/packets"
 	"golang.org/x/sync/semaphore"
 )
@@ -120,7 +120,6 @@ type Client interface {
 // clients are safe for concurrent use by multiple
 // goroutines
 type client struct {
-	emitter         EventBus.Bus
 	lastSent        atomic.Value // time.Time - the last time a packet was successfully sent to network
 	lastReceived    atomic.Value // time.Time - the last time a packet was successfully received from network
 	pingOutstanding int32        // set to 1 if a ping has been sent but response not ret received
@@ -144,6 +143,8 @@ type client struct {
 	commsStopped chan struct{}  // closed when the comms routines have stopped (kept running until after workers have closed to avoid deadlocks)
 
 	backoff *backoffController
+
+	auth *DeviceAuth
 }
 
 // NewClient will create an MQTT v3.1.1 client with all of the options specified
@@ -151,9 +152,7 @@ type client struct {
 // on it before it may be used. This is to make sure resources (such as a net
 // connection) are created before the application is actually ready.
 func NewClient(o *ClientOptions) Client {
-	c := &client{
-		emitter: o.Emitter,
-	}
+	c := &client{}
 	c.options = *o
 
 	if c.options.Store == nil {
@@ -175,6 +174,7 @@ func NewClient(o *ClientOptions) Client {
 	c.obound = make(chan *PacketAndToken)
 	c.oboundP = make(chan *PacketAndToken)
 	c.backoff = newBackoffController()
+	c.auth = o.Auth
 	return c
 }
 
@@ -297,7 +297,39 @@ func (c *client) Connect() Token {
 			WARN.Println(CLI, "Connect() called but connection established in another goroutine")
 		}
 
-		c.emitter.Publish("payload", payload)
+		if payload == nil {
+			ERROR.Println("Try resetting your fbns state!")
+		} else {
+			DEBUG.Println("Connected to MQTT")
+			if len(payload) == 0 {
+				ERROR.Println("Received empty connect packet. Try resetting your fbns state!")
+			} else {
+				DEBUG.Println("Received auth:", string(payload))
+
+				payloadStruct := struct {
+					PkgName string `json:"pkg_name"`
+					AppID   string `json:"appid"`
+				}{
+					PkgName: "com.instagram.barcelona",
+					AppID:   "567067343352427",
+				}
+				var payloadBytes []byte
+				payloadBytes, err = json.Marshal(payloadStruct)
+				if err != nil {
+					ERROR.Println(err)
+				} else {
+					if token := c.Publish("79", 1, false, payloadBytes); token.Wait() && token.Error() != nil {
+						ERROR.Println("Error Publish:", token.Error())
+					} else {
+						c.auth.Read(string(payload))
+						DEBUG.Println(c.auth)
+						if token = c.Subscribe("76", 1, nil); token.Wait() && token.Error() != nil {
+							ERROR.Println("Error Subscribe:", token.Error())
+						}
+					}
+				}
+			}
+		}
 
 		close(inboundFromStore)
 		t.flowComplete()
