@@ -25,7 +25,6 @@ package mqtt
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -114,6 +113,8 @@ type Client interface {
 	// OptionsReader returns a ClientOptionsReader which is a copy of the clientoptions
 	// in use by the client.
 	OptionsReader() ClientOptionsReader
+
+	Payload() []byte
 }
 
 // client implements the Client interface
@@ -144,7 +145,7 @@ type client struct {
 
 	backoff *backoffController
 
-	auth *DeviceAuth
+	payload []byte
 }
 
 // NewClient will create an MQTT v3.1.1 client with all of the options specified
@@ -174,8 +175,11 @@ func NewClient(o *ClientOptions) Client {
 	c.obound = make(chan *PacketAndToken)
 	c.oboundP = make(chan *PacketAndToken)
 	c.backoff = newBackoffController()
-	c.auth = o.Auth
 	return c
+}
+
+func (c *client) Payload() []byte {
+	return c.payload
 }
 
 // AddRoute allows you to add a handler for messages on a specific topic
@@ -264,9 +268,8 @@ func (c *client) Connect() Token {
 	RETRYCONN:
 		var conn net.Conn
 		var rc byte
-		var payload []byte
 		var err error
-		conn, rc, t.sessionPresent, payload, err = c.attemptConnection()
+		conn, rc, t.sessionPresent, err = c.attemptConnection()
 		if err != nil {
 			if c.options.ConnectRetry {
 				DEBUG.Println(CLI, "Connect failed, sleeping for", int(c.options.ConnectRetryInterval.Seconds()), "seconds and will then retry, error:", err.Error())
@@ -285,6 +288,7 @@ func (c *client) Connect() Token {
 			}
 			return
 		}
+
 		inboundFromStore := make(chan packets.ControlPacket)           // there may be some inbound comms packets in the store that are awaiting processing
 		if c.startCommsWorkers(conn, connectionUp, inboundFromStore) { // note that this takes care of updating the status (to connected or disconnected)
 			// Take care of any messages in the store
@@ -295,40 +299,6 @@ func (c *client) Connect() Token {
 			}
 		} else { // Note: With the new status subsystem this should only happen if Disconnect called simultaneously with the above
 			WARN.Println(CLI, "Connect() called but connection established in another goroutine")
-		}
-
-		if payload == nil {
-			ERROR.Println("Try resetting your fbns state!")
-		} else {
-			DEBUG.Println("Connected to MQTT")
-			if len(payload) == 0 {
-				ERROR.Println("Received empty connect packet. Try resetting your fbns state!")
-			} else {
-				DEBUG.Println("Received auth:", string(payload))
-
-				payloadStruct := struct {
-					PkgName string `json:"pkg_name"`
-					AppID   string `json:"appid"`
-				}{
-					PkgName: "com.instagram.barcelona",
-					AppID:   "567067343352427",
-				}
-				var payloadBytes []byte
-				payloadBytes, err = json.Marshal(payloadStruct)
-				if err != nil {
-					ERROR.Println(err)
-				} else {
-					if token := c.Publish("79", 1, false, payloadBytes); token.Wait() && token.Error() != nil {
-						ERROR.Println("Error Publish:", token.Error())
-					} else {
-						c.auth.Read(string(payload))
-						DEBUG.Println(c.auth)
-						if token = c.Subscribe("76", 1, nil); token.Wait() && token.Error() != nil {
-							ERROR.Println("Error Subscribe:", token.Error())
-						}
-					}
-				}
-			}
 		}
 
 		close(inboundFromStore)
@@ -358,7 +328,7 @@ func (c *client) reconnect(connectionUp connCompletedFn) {
 			c.options.OnReconnecting(c, &c.options)
 		}
 		var err error
-		conn, _, _, _, err = c.attemptConnection()
+		conn, _, _, err = c.attemptConnection()
 		if err == nil {
 			break
 		}
@@ -389,14 +359,13 @@ func (c *client) reconnect(connectionUp connCompletedFn) {
 // byte - Return code (packets.Accepted indicates a successful connection).
 // bool - SessionPresent flag from the connect ack (only valid if packets.Accepted)
 // err - Error (err != nil guarantees that conn has been set to active connection).
-func (c *client) attemptConnection() (net.Conn, byte, bool, []byte, error) {
+func (c *client) attemptConnection() (net.Conn, byte, bool, error) {
 	protocolVersion := c.options.ProtocolVersion
 	var (
 		sessionPresent bool
 		conn           net.Conn
 		err            error
 		rc             byte
-		payload        []byte
 	)
 
 	c.optionsMu.Lock() // Protect c.options.Servers so that servers can be added in test cases
@@ -437,8 +406,10 @@ func (c *client) attemptConnection() (net.Conn, byte, bool, []byte, error) {
 		}
 
 		// Now we perform the MQTT connection handshake
+		var payload []byte
 		rc, sessionPresent, payload, err = connectMQTT(conn, cm, protocolVersion)
 		if rc == packets.Accepted {
+			c.payload = payload
 			if err := conn.SetDeadline(time.Time{}); err != nil {
 				ERROR.Println(CLI, "reset deadline following handshake ", err)
 			}
@@ -469,7 +440,7 @@ func (c *client) attemptConnection() (net.Conn, byte, bool, []byte, error) {
 			err = fmt.Errorf("%s : %s", packets.ConnErrors[rc], err)
 		}
 	}
-	return conn, rc, sessionPresent, payload, err
+	return conn, rc, sessionPresent, err
 }
 
 // Disconnect will end the connection with the server, but not before waiting
@@ -739,12 +710,14 @@ func (c *client) startCommsWorkers(conn net.Conn, connectionUp connCompletedFn, 
 		DEBUG.Println(CLI, "incoming comms goroutine done")
 		close(c.commsStopped)
 	}()
+
 	DEBUG.Println(CLI, "startCommsWorkers done")
 	return true
 }
 
-func completeConnectFlow(payload []byte) {
-
+func sendPushRegister(token []byte) error {
+	CRITICAL.Println("gooooood")
+	return nil
 }
 
 // stopWorkersAndComms - Cleanly shuts down worker go routines (including the comms routines) and waits until everything has stopped

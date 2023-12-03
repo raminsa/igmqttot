@@ -105,7 +105,6 @@ type ClientOptions struct {
 	Dialer                  *net.Dialer
 	CustomOpenConnectionFn  OpenConnectionFunc
 	AutoAckDisabled         bool
-	Auth                    *DeviceAuth
 }
 
 // NewClientOptions will create a new ClientClientOptions type with some
@@ -118,7 +117,7 @@ type ClientOptions struct {
 //	ConnectTimeout: 30 (seconds)
 //	MaxReconnectInterval 10 (minutes)
 //	AutoReconnect: True
-func NewClientOptions(auth *DeviceAuth) *ClientOptions {
+func NewClientOptions() *ClientOptions {
 	o := &ClientOptions{
 		Servers:                 nil,
 		ClientID:                nil,
@@ -151,7 +150,6 @@ func NewClientOptions(auth *DeviceAuth) *ClientOptions {
 		Dialer:                  &net.Dialer{Timeout: 30 * time.Second},
 		CustomOpenConnectionFn:  nil,
 		AutoAckDisabled:         false,
-		Auth:                    auth,
 	}
 	return o
 }
