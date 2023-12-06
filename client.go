@@ -715,11 +715,6 @@ func (c *client) startCommsWorkers(conn net.Conn, connectionUp connCompletedFn, 
 	return true
 }
 
-func sendPushRegister(token []byte) error {
-	CRITICAL.Println("gooooood")
-	return nil
-}
-
 // stopWorkersAndComms - Cleanly shuts down worker go routines (including the comms routines) and waits until everything has stopped
 // Returns nil if workers did not need to be stopped; otherwise returns a channel which will be closed when the stop is complete
 // Note: This may block so run as a go routine if calling from any of the comms routines
