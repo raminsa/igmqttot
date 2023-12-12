@@ -59,7 +59,7 @@ func (c *ConnectPacket) Write(w io.Writer) error {
 	body.Write(encodeString("MQTToT"))
 	body.WriteByte(3)
 	body.WriteByte(194)
-	body.Write(encodeUint16(60))
+	body.Write(encodeUint16(c.Keepalive))
 	body.Write(c.ClientIdentifier)
 	c.FixedHeader.RemainingLength = body.Len()
 	packet := c.FixedHeader.pack()
