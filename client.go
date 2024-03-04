@@ -437,7 +437,7 @@ func (c *client) attemptConnection() (net.Conn, byte, bool, error) {
 		if rc != packets.ErrNetworkError { // mqtt error
 			err = packets.ConnErrors[rc]
 		} else { // network error (if this occurred in ConnectMQTT then err will be nil)
-			err = fmt.Errorf("%s : %s", packets.ConnErrors[rc], err)
+			err = fmt.Errorf("%w : %w", packets.ConnErrors[rc], err)
 		}
 	}
 	return conn, rc, sessionPresent, err
