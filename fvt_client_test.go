@@ -957,7 +957,7 @@ func Test_CallbackOverrun(t *testing.T) {
 		handlerCalled <- true
 		<-handlerChoke // Wait until connection has been closed
 		if string(msg.Payload()) != "test message" {
-			handlerError <- fmt.Errorf("Message payload incorrect")
+			handlerError <- fmt.Errorf("message payload incorrect")
 		} else {
 			handlerError <- nil // Allow main test to proceed (should not raise error in go routine)
 		}

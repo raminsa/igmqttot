@@ -19,7 +19,6 @@
 package mqtt
 
 import (
-	"io/ioutil"
 	"os"
 	"path"
 	"sort"
@@ -166,7 +165,7 @@ func (store *FileStore) all() []string {
 		return nil
 	}
 
-	files, err = ioutil.ReadDir(store.directory)
+	files, err = os.ReadDir(store.directory)
 	chkerr(err)
 	sort.Sort(files)
 	for _, f := range files {
@@ -246,7 +245,7 @@ func exists(file string) bool {
 	return true
 }
 
-type fileInfos []os.FileInfo
+type fileInfos []os.DirEntry
 
 func (f fileInfos) Len() int {
 	return len(f)
@@ -257,5 +256,11 @@ func (f fileInfos) Swap(i, j int) {
 }
 
 func (f fileInfos) Less(i, j int) bool {
-	return f[i].ModTime().Before(f[j].ModTime())
+	if fi, err := f[i].Info(); err == nil {
+		if fj, err := f[j].Info(); err == nil {
+			return fi.ModTime().Before(fj.ModTime())
+		}
+	}
+
+	return false
 }

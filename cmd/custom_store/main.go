@@ -29,7 +29,7 @@ import (
 	"github.com/raminsa/igmqttot/packets"
 )
 
-// This NoOpStore type implements the go-mqtt/Store interface, which
+// NoOpStore This type implements the go-mqtt/Store interface, which
 // allows it to be used by the go-mqtt client library. However, it is
 // highly recommended that you do not use this NoOpStore in production,
 // because it will NOT provide any sort of guarantee of message delivery.

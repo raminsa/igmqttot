@@ -1224,7 +1224,7 @@ func (c *client) UpdateLastReceived() {
 	}
 }
 
-// UpdateLastReceived - Will be called whenever a packet is successfully transmitted to the network
+// UpdateLastSent - Will be called whenever a packet is successfully transmitted to the network
 func (c *client) UpdateLastSent() {
 	if c.options.KeepAlive != 0 {
 		c.lastSent.Store(time.Now())
